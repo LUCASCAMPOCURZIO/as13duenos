@@ -632,6 +632,7 @@ function cargarXLSX(callback) {
   <!-- Resultado del análisis -->
   <div class="card" id="banco-analisis" style="display:none;">
     <p class="card-title">📊 Análisis del extracto</p>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:8px;">Cuenta compartida con Frito — ya se calculó el 85% que corresponde a AS13.</p>
     <div id="banco-resumen-conceptos"></div>
     <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:10px;display:flex;justify-content:space-between;align-items:center;">
       <span style="font-size:14px;font-weight:600;color:var(--text);">Total gastos bancarios</span>
@@ -3500,6 +3501,9 @@ window.procesarCSV=function(input, tipo){
   input.value='';
 };
 
+// AS13 paga el 85% de los gastos del extracto compartido (el resto es de Frito)
+const AS13_PCT_CUENTA_COMPARTIDA=0.85;
+
 function procesarCSV_Banco(texto){
   const lineas=texto.split('\n');
   const totales={};
@@ -3516,6 +3520,7 @@ function procesarCSV_Banco(texto){
       if(p.patron.test(concepto)) totales[p.key]+=monto;
     });
   });
+  Object.keys(totales).forEach(k=>{totales[k]=totales[k]*AS13_PCT_CUENTA_COMPARTIDA;});
   const totalGeneral=Object.values(totales).reduce((a,v)=>a+v,0);
   if(totalGeneral===0){toast('No se encontraron gastos bancarios en el archivo');return;}
   _analisisActual={tipo:'banco',totales,totalGeneral};
@@ -3538,6 +3543,7 @@ function procesarCSV_MP(texto){
     if(cargo>0){totalComisiones+=cargo;totalOperaciones++;}
   });
   if(totalComisiones===0){toast('No se encontraron comisiones en el archivo');return;}
+  totalComisiones=totalComisiones*AS13_PCT_CUENTA_COMPARTIDA;
   _analisisActual={
     tipo:'mp',
     totales:{'mp_comisiones':totalComisiones},
@@ -3606,6 +3612,9 @@ window.procesarXLSX_MP=function(input){
       });
 
       if(totalPercepciones===0){toast('No se encontraron percepciones en el archivo');return;}
+
+      Object.keys(conceptos).forEach(k=>{conceptos[k]=conceptos[k]*AS13_PCT_CUENTA_COMPARTIDA;});
+      totalPercepciones=totalPercepciones*AS13_PCT_CUENTA_COMPARTIDA;
 
       _analisisActual={
         tipo:'mp_perc',
