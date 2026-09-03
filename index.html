@@ -1227,13 +1227,16 @@ async function cargarDatos(){
       cfg=co;
       document.getElementById('cfg-fc').value=cfg.fc;
       document.getElementById('cfg-dias').value=cfg.dias;
-      if(cfg.fijoEstimado){const el=document.getElementById('cfg-fijo-estimado');if(el)el.value=cfg.fijoEstimado;}
-
+      // El input de "Gasto fijo mensual estimado" se completa en
+      // updateCfgDisplay() con el valor propio del mes (independiente),
+      // una vez cargado _fijosEstimados del mes actual (ver abajo).
     }
     if(prod) _productos=prod.lista||[];
     if(ge) _gastosEquipo=ge.lista||[];
     if(ba) _banco=ba.lista||[];
     actualizarVencimientosMes();
+    const mesActualParaEstimado=`${new Date().getFullYear()}-${String(new Date().getMonth()+1).padStart(2,'0')}`;
+    await cargarFijoEstimadoMes(mesActualParaEstimado).catch(()=>{});
     setSyncDot('ok');
     // Guardar cache para próxima carga
     guardarCache({
@@ -1263,11 +1266,11 @@ async function cargarDatos(){
 // ---- UTILS ----
 function fmt(n){return '$'+Math.round(n).toLocaleString('es-AR');}
 function fijoDia(){
-  // Si hay un gasto fijo estimado configurado, usarlo. Si no, calcular desde la lista.
-  if(cfg.fijoEstimado>0) return cfg.fijoEstimado/cfg.dias;
-  return _gastosFijos.filter(g=>!g.esBanco&&!g.esMpGasto&&!g.esMpPercGasto&&!g.esPeYaGasto).reduce((a,g)=>a+g.m,0)/cfg.dias;
+  // Siempre usa el gasto fijo estimado del mes REAL de hoy (no el que se
+  // esté mirando en Config), porque esto alimenta el panel del día de hoy.
+  return fijoDiaMes(mesKey());
 }
-function objDia(){const fd=fijoDia();return fd>0?fd/(1-cfg.fc/100):0;}
+function objDia(){return objDiaMes(mesKey());}
 function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2200);}
 function formatFecha(f){if(!f)return '';const [y,m,d]=f.split('-');const ms=['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];return `${parseInt(d)} ${ms[parseInt(m)-1]} ${y}`;}
 function hoyISO(){
@@ -1360,34 +1363,54 @@ function renderResenas(resenas){
 window.saveConfig=function(){
   cfg.fc=parseFloat(document.getElementById('cfg-fc').value)||32;
   cfg.dias=parseFloat(document.getElementById('cfg-dias').value)||30;
-  cfg.fijoEstimado=parseFloat(document.getElementById('cfg-fijo-estimado').value)||0;
-
   fbSet('datos','config',cfg);
+
+  // Gasto fijo mensual estimado — se guarda en el mes que se está viendo
+  // en Config (el mismo selector que usa la tarjeta de Gastos Fijos), NO
+  // como un valor global. Así editarlo en un mes no toca otros meses.
+  const mesEstim=_gfMesViendo||mesKey();
+  const valEstim=parseFloat(document.getElementById('cfg-fijo-estimado').value)||0;
+  _fijosEstimados[mesEstim]=valEstim;
+  setDoc(doc(db,'fijos_estimados',mesEstim),{monto:valEstim}).catch(err=>console.error(err));
+
   updateCfgDisplay();recalc();
 };
 function updateCfgDisplay(){
-  const fd=fijoDia();
+  const viendo=_gfMesViendo||mesKey();
+
+  // Campo "Gasto fijo mensual estimado" — mostrar el valor propio del mes
+  // que se está viendo (no pisar mientras el usuario está escribiendo).
+  const estInput=document.getElementById('cfg-fijo-estimado');
+  if(estInput && document.activeElement!==estInput){
+    const v=getFijoEstimado(viendo);
+    estInput.value=v>0?v:'';
+  }
+  const fd=fijoDiaMes(viendo);
   document.querySelectorAll('#cfg-fijo-dia').forEach(el=>el.textContent=fmt(fd));
   const objEl=document.getElementById('cfg-obj');
-  if(objEl) objEl.textContent=fmt(objDia());
+  if(objEl) objEl.textContent=fmt(objDiaMes(viendo));
 
-  // Totales en gastos fijos — banco/MP/PeYa calculados desde _banco real
-  const mesViendo=_gfMesViendo||mesKey();
-  const base=_gastosFijos.filter(g=>!g.esBanco&&!g.esMpGasto&&!g.esMpPercGasto&&!g.esPeYaGasto).reduce((a,g)=>a+g.m,0);
-  // Calcular extra directamente desde _banco para que coincida con lo visible
-  const extraBanco=_banco.filter(b=>b.mes===mesViendo&&b.desdeCSV&&!b.esMP&&!b.esMpPerc).reduce((a,b)=>a+b.monto,0);
-  const extraMP=_banco.filter(b=>b.mes===mesViendo&&b.esMP).reduce((a,b)=>a+b.monto,0);
-  const extraMPPerc=_banco.filter(b=>b.mes===mesViendo&&b.esMpPerc).reduce((a,b)=>a+b.monto,0);
-  const extraPeYa=_banco.filter(b=>b.mes===mesViendo&&b.esPeYa&&!b.desdeCSV).reduce((a,b)=>a+b.monto,0);
-  // PeYa desde CSV (guardarAnalisisBanco tipo peya)
-  const extraPeYaCSV=_gastosFijos.filter(g=>g.esPeYaGasto&&g.desdeCSV&&(!g.mesBanco||g.mesBanco===mesViendo)).reduce((a,g)=>a+g.m,0);
-  const extra=extraBanco+extraMP+extraMPPerc+extraPeYa+extraPeYaCSV;
-  const totBase=document.getElementById('gf-tot-base');
-  const totExtra=document.getElementById('gf-tot-extra');
-  const totVal=document.getElementById('gf-tot-val');
-  if(totBase) totBase.textContent=fmt(base);
-  if(totExtra) totExtra.textContent=fmt(extra);
-  if(totVal) totVal.textContent=fmt(base+extra);
+  // Totales en gastos fijos (Gastos fijos base / Banco / Total real) — esto
+  // solo aplica al mes actual: cuando se está viendo un mes anterior,
+  // renderGastosFijos() ya calculó y pintó estos mismos totales para ese
+  // mes histórico, y no hay que pisarlos con datos del mes en curso.
+  if(viendo===mesKey()){
+    const base=_gastosFijos.filter(g=>!g.esBanco&&!g.esMpGasto&&!g.esMpPercGasto&&!g.esPeYaGasto).reduce((a,g)=>a+g.m,0);
+    // Calcular extra directamente desde _banco para que coincida con lo visible
+    const extraBanco=_banco.filter(b=>b.mes===viendo&&b.desdeCSV&&!b.esMP&&!b.esMpPerc).reduce((a,b)=>a+b.monto,0);
+    const extraMP=_banco.filter(b=>b.mes===viendo&&b.esMP).reduce((a,b)=>a+b.monto,0);
+    const extraMPPerc=_banco.filter(b=>b.mes===viendo&&b.esMpPerc).reduce((a,b)=>a+b.monto,0);
+    const extraPeYa=_banco.filter(b=>b.mes===viendo&&b.esPeYa&&!b.desdeCSV).reduce((a,b)=>a+b.monto,0);
+    // PeYa desde CSV (guardarAnalisisBanco tipo peya)
+    const extraPeYaCSV=_gastosFijos.filter(g=>g.esPeYaGasto&&g.desdeCSV&&(!g.mesBanco||g.mesBanco===viendo)).reduce((a,g)=>a+g.m,0);
+    const extra=extraBanco+extraMP+extraMPPerc+extraPeYa+extraPeYaCSV;
+    const totBase=document.getElementById('gf-tot-base');
+    const totExtra=document.getElementById('gf-tot-extra');
+    const totVal=document.getElementById('gf-tot-val');
+    if(totBase) totBase.textContent=fmt(base);
+    if(totExtra) totExtra.textContent=fmt(extra);
+    if(totVal) totVal.textContent=fmt(base+extra);
+  }
 }
 
 // ---- GASTOS FIJOS ----
@@ -3020,6 +3043,34 @@ let _fijosHistorico={};
 let _gfHistorico={}; // historial de listas de gastos fijos por mes
 let _gfMesViendo=''; // mes que se está viendo en config (vacío = mes actual)
 
+// "Gasto fijo mensual estimado" — independiente por mes
+// (antes era un único valor global en cfg.fijoEstimado, que se compartía
+// entre todos los meses: editarlo para "julio" también cambiaba lo que
+// se veía en "noviembre". Ahora cada mes tiene su propio registro en
+// fijos_estimados/{mesKey}; cfg.fijoEstimado queda solo como valor de
+// respaldo para meses viejos que nunca recibieron su propio registro.)
+let _fijosEstimados={};
+async function cargarFijoEstimadoMes(mesKey){
+  if(_fijosEstimados[mesKey]!==undefined) return _fijosEstimados[mesKey];
+  try{
+    const snap=await getDoc(doc(db,'fijos_estimados',mesKey));
+    _fijosEstimados[mesKey]=snap.exists()?(snap.data().monto||0):null;
+  }catch(e){_fijosEstimados[mesKey]=null;}
+  return _fijosEstimados[mesKey];
+}
+function getFijoEstimado(mesKeyArg){
+  const v=_fijosEstimados[mesKeyArg];
+  if(v!==undefined&&v!==null) return v;
+  return cfg.fijoEstimado||0; // respaldo legacy para meses sin registro propio
+}
+function fijoDiaMes(mesKeyArg){
+  const est=getFijoEstimado(mesKeyArg);
+  if(est>0) return est/cfg.dias;
+  const lista=(mesKeyArg===mesKey())?_gastosFijos:(_gfHistorico[mesKeyArg]||_gastosFijos);
+  return lista.filter(g=>!g.esBanco&&!g.esMpGasto&&!g.esMpPercGasto&&!g.esPeYaGasto).reduce((a,g)=>a+g.m,0)/cfg.dias;
+}
+function objDiaMes(mesKeyArg){const fd=fijoDiaMes(mesKeyArg);return fd>0?fd/(1-cfg.fc/100):0;}
+
 async function cargarGfHistorico(mesKey){
   if(_gfHistorico[mesKey]!==undefined) return;
   try{
@@ -3039,15 +3090,18 @@ async function guardarSnapshotGfMes(mesKey, lista){
 
 window.verGfMes=async function(mesKey){
   _gfMesViendo=mesKey;
-  if(!_gfHistorico[mesKey]&&mesKey!==''){
-    await cargarGfHistorico(mesKey);
-  }
+  const proms=[];
+  if(!_gfHistorico[mesKey]&&mesKey!=='') proms.push(cargarGfHistorico(mesKey));
+  if(_fijosEstimados[mesKey]===undefined) proms.push(cargarFijoEstimadoMes(mesKey));
+  if(proms.length) await Promise.all(proms);
   renderGastosFijos();
+  updateCfgDisplay();
 };
 
 window.volverGfActual=function(){
   _gfMesViendo='';
   renderGastosFijos();
+  updateCfgDisplay();
 };
 async function cargarFijoMes(mesKey){
   if(_fijosHistorico[mesKey]!==undefined) return _fijosHistorico[mesKey];
@@ -3074,10 +3128,11 @@ function renderResumen(){
   // Cargar fijo real de este mes si no está en cache
   const ahora=new Date();
   const mesKeyLoad=`${year}-${String(month+1).padStart(2,'0')}`;
-  if(_fijosHistorico[mesKeyLoad]===undefined||_gfHistorico[mesKeyLoad]===undefined){
+  if(_fijosHistorico[mesKeyLoad]===undefined||_gfHistorico[mesKeyLoad]===undefined||_fijosEstimados[mesKeyLoad]===undefined){
     Promise.all([
       cargarFijoMes(mesKeyLoad),
-      _gfHistorico[mesKeyLoad]===undefined?cargarGfHistorico(mesKeyLoad):Promise.resolve()
+      _gfHistorico[mesKeyLoad]===undefined?cargarGfHistorico(mesKeyLoad):Promise.resolve(),
+      _fijosEstimados[mesKeyLoad]===undefined?cargarFijoEstimadoMes(mesKeyLoad):Promise.resolve()
     ]).then(()=>renderResumen());
     el.innerHTML='<div class="empty">Cargando...</div>';return;
   }
@@ -3097,15 +3152,20 @@ function renderResumen(){
     tfi=fijoRealGuardado;
   } else if(gfDelMes){
     tfi=totalGfBase;
-  } else if(esMesActual){
-    tfi=((cfg.fijoEstimado>0?cfg.fijoEstimado:totalGfBase)/cfg.dias)*h.length;
   } else {
-    // Mes cerrado sin registro guardado todavía: lo calculamos una sola vez
-    // y lo dejamos fijo (fijos_historico) para que después no se siga
-    // moviendo si cambiás el gasto fijo estimado del mes en curso.
-    tfi=Math.round(((cfg.fijoEstimado>0?cfg.fijoEstimado:totalGfBase)/cfg.dias)*h.length);
-    _fijosHistorico[mesKey]=tfi;
-    setDoc(doc(db,'fijos_historico',mesKey),{monto:tfi}).catch(err=>console.error(err));
+    // Usamos el "gasto fijo estimado" propio de ESTE mes (mesKey), no el
+    // global — cada mes tiene su propio valor independiente.
+    const estimadoMes=getFijoEstimado(mesKey);
+    if(esMesActual){
+      tfi=((estimadoMes>0?estimadoMes:totalGfBase)/cfg.dias)*h.length;
+    } else {
+      // Mes cerrado sin registro guardado todavía: lo calculamos una sola vez
+      // y lo dejamos fijo (fijos_historico) para que después no se siga
+      // moviendo si cambiás el gasto fijo estimado de otro mes.
+      tfi=Math.round(((estimadoMes>0?estimadoMes:totalGfBase)/cfg.dias)*h.length);
+      _fijosHistorico[mesKey]=tfi;
+      setDoc(doc(db,'fijos_historico',mesKey),{monto:tfi}).catch(err=>console.error(err));
+    }
   }
   const tgv=h.reduce((a,d)=>a+d.gv,0),tmd=h.reduce((a,d)=>a+d.vm,0),tnc=h.reduce((a,d)=>a+d.vn,0);
   // Gastos bancarios del mes — total, no prorrateado
