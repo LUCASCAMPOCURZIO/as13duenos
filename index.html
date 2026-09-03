@@ -1417,6 +1417,12 @@ function renderGastosFijos(){
       [{id:peYaHistId,n:'🛵 PedidosYa',m:listaViendo.filter(g=>g.esPeYaGasto&&!g.desdeCSV).reduce((a,g)=>a+g.m,0),esPeYaGasto:true}]:[];
     const listaConsolidada=[...listaBase,...peYaHistItem];
     const totalBase=listaConsolidada.filter(g=>!g.esBanco&&!g.esMpGasto&&!g.esMpPercGasto&&!g.esPeYaGasto).reduce((a,g)=>a+g.m,0);
+    // Extra del mes histórico — banco/MP/PeYa, igual que en updateCfgDisplay() pero para "viendo"
+    const extraBancoH=_banco.filter(b=>b.mes===viendo&&b.desdeCSV&&!b.esMP&&!b.esMpPerc).reduce((a,b)=>a+b.monto,0);
+    const extraMPH=_banco.filter(b=>b.mes===viendo&&b.esMP).reduce((a,b)=>a+b.monto,0);
+    const extraMPPercH=_banco.filter(b=>b.mes===viendo&&b.esMpPerc).reduce((a,b)=>a+b.monto,0);
+    const extraPeYaCSVH=_gastosFijos.filter(g=>g.esPeYaGasto&&g.desdeCSV&&g.mesBanco===viendo).reduce((a,g)=>a+g.m,0);
+    const extraH=extraBancoH+extraMPH+extraMPPercH+totalPeYaHist+extraPeYaCSVH;
     const listaOrdenada=[
       ...listaConsolidada.filter(g=>!pagados[g.id]).sort((a,b)=>a.n.localeCompare(b.n,'es')),
       ...listaConsolidada.filter(g=>!!pagados[g.id])
@@ -1444,8 +1450,10 @@ function renderGastosFijos(){
     if(ep)ep.textContent=fmt(totalPagH);if(en)en.textContent=fmt(totalPenH);
     const totBase=document.getElementById('gf-tot-base');
     if(totBase)totBase.textContent=fmt(totalBase);
+    const totExtra=document.getElementById('gf-tot-extra');
+    if(totExtra)totExtra.textContent=fmt(extraH);
     const totVal=document.getElementById('gf-tot-val');
-    if(totVal)totVal.textContent=fmt(totalBase);
+    if(totVal)totVal.textContent=fmt(totalBase+extraH);
     const alertasEl=document.getElementById('gf-alertas');
     if(alertasEl)alertasEl.innerHTML=`<div style="background:#f0f0fb;border:1px solid #c5c0f0;border-radius:10px;padding:10px 14px;margin-bottom:8px;">
       <p style="font-size:12px;color:#6c5ce7;font-weight:600;margin-bottom:${listaViendo.length?'0':'8px'};">📋 Historial de ${meses[parseInt(viendo.split('-')[1])-1]} ${viendo.split('-')[0]} — podés editar los montos</p>
