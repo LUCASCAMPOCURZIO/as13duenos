@@ -1429,12 +1429,14 @@ function renderGastosFijos(){
     if(el) el.innerHTML=listaOrdenada.length
       ? listaOrdenada.map(g=>{
           const paid=!!pagados[g.id];
+          const delBtn=g.esPeYaGasto?'':`<button class="gdel" onclick="delGfHistorico('${viendo}',${g.id})">✕</button>`;
           return `<div class="gitem" style="${paid?'opacity:0.55;':''}">
             <button onclick="togglePagado('${g.id}')" style="width:26px;height:26px;border-radius:99px;border:2px solid ${paid?'#7dca7d':'var(--border2)'};background:${paid?'#7dca7d':'transparent'};cursor:pointer;flex-shrink:0;font-size:14px;">${paid?'✓':''}</button>
             <div style="flex:1;min-width:0;"><p style="font-size:14px;color:${paid?'var(--text3)':'var(--text)'};${paid?'text-decoration:line-through;':''}">${g.n}</p></div>
             <span style="color:var(--text3);font-size:13px;">$</span>
             <input type="text" value="${g.m.toLocaleString('es-AR')}" onchange="editGfHistorico('${viendo}',${g.id},this.value)"
               style="width:90px;border:none;background:transparent;outline:none;font-size:14px;font-weight:600;color:var(--text);font-family:inherit;text-align:right;" inputmode="numeric"/>
+            ${delBtn}
           </div>`;
         }).join('')
       : '<p style="font-size:13px;color:var(--text3);padding:4px 0 8px;">Sin datos guardados para este mes</p>';
@@ -1592,6 +1594,15 @@ window.editGfHistorico=async function(mesKey,id,valor){
   _gfHistorico[mesKey]=lista;
   await setDoc(doc(db,'gf_historico',mesKey),{lista,guardadoEn:Date.now()});
   toast('✓ Guardado');
+  renderGastosFijos();
+};
+
+window.delGfHistorico=async function(mesKey,id){
+  if(!confirm('¿Eliminar este gasto fijo?'))return;
+  const lista=(_gfHistorico[mesKey]||[]).filter(g=>String(g.id)!==String(id));
+  _gfHistorico[mesKey]=lista;
+  await setDoc(doc(db,'gf_historico',mesKey),{lista,guardadoEn:Date.now()});
+  toast('✓ Eliminado');
   renderGastosFijos();
 };
 
@@ -3045,9 +3056,21 @@ function renderResumen(){
   const gfDelMes=_gfHistorico[mesKey]||null;
   const gastosFijosSinBanco=(gfDelMes||_gastosFijos).filter(g=>!g.esBanco&&!g.esMpGasto&&!g.esMpPercGasto&&!g.esPeYaGasto);
   const totalGfBase=gastosFijosSinBanco.reduce((a,g)=>a+g.m,0);
-  const tfi=fijoRealGuardado>0?fijoRealGuardado
-    :gfDelMes?totalGfBase
-    :((cfg.fijoEstimado>0?cfg.fijoEstimado:totalGfBase)/cfg.dias)*h.length;
+  let tfi;
+  if(fijoRealGuardado>0){
+    tfi=fijoRealGuardado;
+  } else if(gfDelMes){
+    tfi=totalGfBase;
+  } else if(esMesActual){
+    tfi=((cfg.fijoEstimado>0?cfg.fijoEstimado:totalGfBase)/cfg.dias)*h.length;
+  } else {
+    // Mes cerrado sin registro guardado todavía: lo calculamos una sola vez
+    // y lo dejamos fijo (fijos_historico) para que después no se siga
+    // moviendo si cambiás el gasto fijo estimado del mes en curso.
+    tfi=Math.round(((cfg.fijoEstimado>0?cfg.fijoEstimado:totalGfBase)/cfg.dias)*h.length);
+    _fijosHistorico[mesKey]=tfi;
+    setDoc(doc(db,'fijos_historico',mesKey),{monto:tfi}).catch(err=>console.error(err));
+  }
   const tgv=h.reduce((a,d)=>a+d.gv,0),tmd=h.reduce((a,d)=>a+d.vm,0),tnc=h.reduce((a,d)=>a+d.vn,0);
   // Gastos bancarios del mes — total, no prorrateado
   const mesBanco=`${year}-${String(month+1).padStart(2,'0')}`;
