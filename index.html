@@ -1056,6 +1056,33 @@ function getHistorial(){return _historial;}
 function saveHistorial(h){ _historial=h; fbSet('datos','historial',{lista:h}); }
 function getGastosFijos(){return _gastosFijos;}
 function saveGastosFijos(g){ _gastosFijos=g; fbSet('datos','gastos_fijos',{lista:g}); }
+
+// ---- ACTUALIZAR VENCIMIENTOS AL MES ACTUAL ----
+// Los gastos fijos recurrentes (alquiler, abogados, etc.) guardan una fecha de
+// vencimiento fija. Al empezar un mes nuevo, si esa fecha quedó en un mes
+// anterior, la corremos automáticamente al mismo día pero del mes en curso
+// (evita que queden marcados "Vencido" para siempre hasta que alguien los edite a mano).
+function actualizarVencimientosMes(){
+  const hoy=new Date();
+  const anio=hoy.getFullYear(), mes=hoy.getMonth(); // mes: 0-indexado
+  const mesActualKey=`${anio}-${String(mes+1).padStart(2,'0')}`;
+  let cambio=false;
+  const gf=_gastosFijos.map(g=>{
+    if(g.esBanco||g.esMpGasto||g.esMpPercGasto||g.esPeYaGasto) return g;
+    if(!g.vcto) return g;
+    const vctoMes=g.vcto.slice(0,7);
+    if(vctoMes>=mesActualKey) return g; // ya es de este mes o de uno futuro, no tocar
+    const dia=parseInt(g.vcto.slice(8,10),10);
+    const ultimoDia=new Date(anio,mes+1,0).getDate();
+    const diaAjustado=Math.min(dia,ultimoDia);
+    cambio=true;
+    return {...g, vcto:`${anio}-${String(mes+1).padStart(2,'0')}-${String(diaAjustado).padStart(2,'0')}`};
+  });
+  if(cambio){
+    saveGastosFijos(gf);
+    console.log('Vencimientos de gastos fijos actualizados al mes actual');
+  }
+}
 function getProveedores(){return _proveedores;}
 function saveProveedores(p){ _proveedores=p; fbSet('datos','proveedores',{lista:p}); }
 
@@ -1206,6 +1233,7 @@ async function cargarDatos(){
     if(prod) _productos=prod.lista||[];
     if(ge) _gastosEquipo=ge.lista||[];
     if(ba) _banco=ba.lista||[];
+    actualizarVencimientosMes();
     setSyncDot('ok');
     // Guardar cache para próxima carga
     guardarCache({
